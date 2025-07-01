@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: whatsapp-clone
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn main.wsgi:application
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: main.settings
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: False
+      - key: EMAIL_HOST_USER
+        value: ubaidrao22388@gmail.com
+      - key: EMAIL_HOST_PASSWORD
+        value: wfvz xkcs umaw kdvd
+      - key: DATABASE_URL
+        value: postgresql://postgres:your_password@db.supabase.co:5432/postgres
