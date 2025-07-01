@@ -1,0 +1,267 @@
+{% extends 'core/base.html' %}
+{% block content %}
+
+<style>
+  .chat-wrapper {
+    display: flex;
+    flex-direction: column;
+    height: 80vh;
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    background-color: #e5ddd5;
+    overflow: hidden;
+  }
+
+  .chat-header {
+    padding: 10px;
+    background-color: #075E54;
+    color: white;
+    font-weight: bold;
+  }
+
+  .chat-messages {
+    flex: 1;
+    padding: 10px;
+    overflow-y: auto;
+    background-color: #d2dbdc;
+  }
+
+  .chat-input {
+    display: flex;
+    padding: 10px;
+    background-color: #f0f0f0;
+    gap: 10px;
+  }
+
+  .message-bubble {
+    max-width: 60%;
+    padding: 10px 15px;
+    margin-bottom: 10px;
+    border-radius: 20px;
+    position: relative;
+    cursor: pointer;
+    transition: border 0.2s ease;
+  }
+
+  .sent {
+    background-color: #dcf8c6;
+    margin-left: auto;
+    text-align: left;
+    border-bottom-right-radius: 0;
+  }
+
+  .received {
+    background-color: white;
+    margin-right: auto;
+    text-align: left;
+    border-bottom-left-radius: 0;
+  }
+
+  .bubble-content {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .message-text {
+    word-wrap: break-word;
+    padding-right: 40px;
+  }
+
+  .time-area {
+    position: absolute;
+    bottom: 4px;
+    right: 10px;
+    font-size: 10px;
+    color: gray;
+  }
+
+  .selected {
+    border: 2px solid red !important;
+  }
+</style>
+
+<div class="chat-wrapper">
+  <!-- Header -->
+  <div class="chat-header">
+    {{ other_user.profile.profile_name|default:other_user.username }}
+  </div>
+
+  <!-- Delete Bar -->
+  <div id="delete-bar" class="text-end mt-2 me-2" style="display: none;">
+    <button class="btn btn-danger btn-sm" onclick="deleteSelected()">Delete</button>
+  </div>
+
+  <!-- Messages -->
+  <div id="chat-box" class="chat-messages">
+    {% for msg in messages %}
+      <div class="message-bubble {% if msg.sender == request.user %}sent{% else %}received{% endif %}"
+        data-id="{{ msg.id }}" onclick="toggleSelect(this)">
+        <div class="bubble-content">
+          <div class="message-text">{{ msg.message }}</div>
+          <div class="time-area">{{ msg.timestamp|date:"h:i A" }}</div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <!-- Input -->
+  <form id="message-form" method="POST" class="chat-input">
+    {% csrf_token %}
+    <input type="hidden" name="receiver_id" value="{{ other_user.id }}">
+    <input type="text" name="message" id="message-input" class="form-control" placeholder="Type a message..." autocomplete="off">
+    <button type="submit" class="btn btn-success">Send</button>
+  </form>
+</div>
+
+<script>
+  const form = document.getElementById('message-form');
+  const input = document.getElementById('message-input');
+  const chatBox = document.getElementById('chat-box');
+  let selectedMessages = [];
+
+  let lastMessageCount = {{ messages|length }};
+
+  // Scroll and request notification
+  window.onload = () => {
+    if (Notification.permission !== 'granted') {
+      Notification.requestPermission();
+    }
+    chatBox.scrollTop = chatBox.scrollHeight;
+  };
+
+  // Submit message
+  form.onsubmit = function (e) {
+    e.preventDefault();
+    const message = input.value.trim();
+    if (!message) return;
+
+    fetch("{% url 'send_message' %}", {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': '{{ csrf_token }}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: `receiver_id={{ other_user.id }}&message=${encodeURIComponent(message)}`
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.status === 'success') {
+        const bubble = document.createElement('div');
+        bubble.className = 'message-bubble sent';
+        bubble.dataset.id = data.id;
+        bubble.setAttribute('onclick', 'toggleSelect(this)');
+
+        const time = new Date(data.timestamp).toLocaleTimeString([], {
+          hour: '2-digit', minute: '2-digit', hour12: true
+        });
+
+        bubble.innerHTML = `
+          <div class="bubble-content">
+            <div class="message-text">${message}</div>
+            <div class="time-area">${time}</div>
+          </div>
+        `;
+
+        chatBox.appendChild(bubble);
+        chatBox.scrollTop = chatBox.scrollHeight;
+        input.value = '';
+        lastMessageCount++;
+      }
+    });
+  };
+
+  // Poll messages
+  setInterval(() => {
+    fetch("{% url 'fetch_messages' other_user.id %}")
+      .then(res => res.json())
+      .then(data => {
+        if (data.messages.length > lastMessageCount) {
+          const newMessages = data.messages.slice(lastMessageCount);
+          newMessages.forEach(msg => {
+            const bubble = document.createElement('div');
+            const isSent = msg.sender == {{ request.user.id }};
+            bubble.className = 'message-bubble ' + (isSent ? 'sent' : 'received');
+            bubble.dataset.id = msg.id;
+            bubble.setAttribute('onclick', 'toggleSelect(this)');
+
+            const time = new Date(msg.timestamp).toLocaleTimeString([], {
+              hour: '2-digit', minute: '2-digit', hour12: true
+            });
+
+            bubble.innerHTML = `
+              <div class="bubble-content">
+                <div class="message-text">${msg.message}</div>
+                <div class="time-area">${time}</div>
+              </div>
+            `;
+
+            chatBox.appendChild(bubble);
+
+            if (!isSent) {
+              if (Notification.permission === 'granted') {
+                new Notification("New message", {
+                  body: msg.message,
+                  icon: '{{ other_user.profile.profile_image.url|default:"/static/img/default_avatar.png" }}'
+                });
+              }
+
+              const sound = new Audio("/static/sounds/notification.mp3");
+              sound.play().catch(err => console.warn("Sound blocked:", err));
+            }
+          });
+
+          chatBox.scrollTop = chatBox.scrollHeight;
+          lastMessageCount = data.messages.length;
+        }
+      });
+  }, 3000);
+
+  // Select messages
+  function toggleSelect(el) {
+    const id = el.dataset.id;
+    if (selectedMessages.includes(id)) {
+      selectedMessages = selectedMessages.filter(i => i !== id);
+      el.classList.remove('selected');
+    } else {
+      selectedMessages.push(id);
+      el.classList.add('selected');
+    }
+    document.getElementById('delete-bar').style.display = selectedMessages.length ? 'block' : 'none';
+  }
+
+  // Delete selected
+  function deleteSelected() {
+    if (!confirm("Are you sure you want to delete selected messages?")) return;
+    fetch("{% url 'delete_messages' %}", {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': '{{ csrf_token }}',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ message_ids: selectedMessages })
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.status === 'success') {
+        selectedMessages.forEach(id => {
+          const el = document.querySelector(`[data-id="${id}"]`);
+          if (el) el.remove();
+        });
+        selectedMessages = [];
+        document.getElementById('delete-bar').style.display = 'none';
+        lastMessageCount -= selectedMessages.length;
+      }
+    });
+  }
+
+  // Enter to send
+  input.addEventListener("keypress", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+</script>
+
+{% endblock %}
